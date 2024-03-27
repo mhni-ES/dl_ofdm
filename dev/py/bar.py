@@ -27,12 +27,11 @@ from ofdm import *
 from radio import *
 from util import *
 import copy
-import graph_def_editor as gde
 # these ones let us draw images in our notebook
 
 flags = tf.compat.v1.app.flags
 flags.DEFINE_string('save_dir', './output/', 'directory where model graph and weights are saved')
-flags.DEFINE_integer('nbits', 4, 'bits per symbol')
+flags.DEFINE_integer('nbits', 1, 'bits per symbol')
 flags.DEFINE_integer('msg_length', 100800, 'Message Length of Dataset')
 flags.DEFINE_integer('batch_size', 512, '')
 flags.DEFINE_integer('max_epoch_num', 5000, '')
@@ -52,25 +51,13 @@ flags.DEFINE_boolean('cp',True,'If include cyclic prefix')
 flags.DEFINE_boolean('longcp',True,'Length of cyclic prefix: true 25%, false 7%')
 flags.DEFINE_boolean('load_model',True,'Set True if run a test')
 flags.DEFINE_float('split',1.0,'split factor for validation set, no split by default')
-flags.DEFINE_string('token', 'OFDM_AWGN_QAM16','Name of model to be saved')
+flags.DEFINE_string('token', 'OFDM','Name of model to be saved')
 flags.DEFINE_integer('opt', 3, '0: default equalizer, 1: NoCConv, 2: NoResidual, 3: DNN')
 flags.DEFINE_boolean('mobile', False, 'If Doppler spread is turned on')
 flags.DEFINE_float('init_learning', 0.001, '')
 flags.DEFINE_boolean('test',False,'Test trained model')
 FLAGS = flags.FLAGS
 
-
-PA_Model_Select = 'PA_Model_BB1'
-PA_Model_File = '/media/workstation/241FB9B9A0036526/AI/dl_ofdm-master/dev/py/PA_models/' + PA_Model_Select + '.mat'
-PA_Model_Data = sio.loadmat(PA_Model_File)
-
-MP_Weights = PA_Model_Data['PA_Model'].squeeze()
-Memory_Deep, Order = np.shape(MP_Weights)
-MP_Weights_Reshape = MP_Weights.T.reshape(-1)
-Model_Input_Power_Max = PA_Model_Data['Model_Input_Power_Max'].squeeze().tolist()
-
-#PA_Model_Data = {'MP_Weights': MP_Weights_Reshape, 'Memory_Deep': Memory_Deep, 'Order': Order, 'Model_Input_Power_Max': Model_Input_Power_Max}
-# Model training here
 
 def test_model_cross(FLAGS, path_prefix_min, ofdmobj, session):
     y, x, iq_receiver, outputs, total_loss, ber, berlin, conf_matrix, power_tx, noise_pwr, iq_rx, iq_tx, ce_mean, SNR = load_model_np(path_prefix_min,session)
@@ -84,7 +71,7 @@ def test_model_cross(FLAGS, path_prefix_min, ofdmobj, session):
     np.random.seed(int(time.time()))
     frame_size = ofdmobj.frame_size
     frame_cnt = 30000
-    for test_chan in ['Flat']:
+    for test_chan in ['ETU','EVA','EPA','Flat', 'Custom']:
         df = pd.DataFrame(columns=['SNR', 'BER', 'Loss'])
         flagcp = copy.deepcopy(FLAGS)
         flagcp.channel = test_chan
@@ -96,7 +83,6 @@ def test_model_cross(FLAGS, path_prefix_min, ofdmobj, session):
             test_ys = bit_source(nbits, frame_size, frame_cnt)
             # iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_np(test_ys)
             iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(test_ys)
-            #iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
             test_xs, _ = fading.run(iq_tx_cmpx)
             snr_test = snr_t * np.ones((frame_cnt, 1))
             test_xs, pwr_noise_avg = AWGN_channel_np(test_xs, snr_test)
@@ -137,7 +123,6 @@ def test_model(FLAGS, path_prefix_min,ofdmobj,session):
         test_ys = bit_source(nbits, frame_size, frame_cnt)
         # iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_np(test_ys)
         iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(test_ys)
-        #iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
         test_xs, _ = fading.run(iq_tx_cmpx)
         snr_test = snr_t * np.ones((frame_cnt, 1))
         test_xs, pwr_noise_avg = AWGN_channel_np(test_xs, snr_test)
@@ -281,10 +266,9 @@ def main(argv):
     saver.restore(session, FLAGS.save_dir + FLAGS.token)
     # print(session.graph.get_operations())
     graph = session.graph
-    graph2 = gde.Graph(graph.as_graph_def())
-    #sgv_tx = gde.sgv_scope('transmitter', graph=graph)
-    sgv_rx = gde.sgv_scope('receiver', graph=graph2)
-    #sgv_ch_awgn = gde.sgv_scope('channel', graph=graph)
+    #sgv_tx = tf.compat.v1.contrib.graph_editor.sgv_scope('transmitter', graph=graph)
+    #sgv_rx = tf.contrib.graph_editor.sgv_scope('receiver', graph=graph)
+    #sgv_ch_awgn = tf.contrib.graph_editor.sgv_scope('channel', graph=graph)
 
     y = graph.get_tensor_by_name('bits_in:0')
     x = graph.get_tensor_by_name('tx_ofdm:0')
@@ -304,7 +288,7 @@ def main(argv):
     # session.close()
     chan_gt = tf.compat.v1.placeholder(tf.complex64, shape=[None, ofdm_pf, nfft], name='chan_freq')
 
-    #iq_rx_mp = tf.cast(tf.reshape(rx_iq_data, [-1, 2]), tf.float16) # output for constellation plot
+    iq_rx_mp = tf.cast(tf.reshape(rx_iq_data, [-1, 2]), tf.float16) # output for constellation plot
     with tf.compat.v1.variable_scope('Equalizer') as scope:
         if FLAGS.opt == 0:
             out_eq, snr_est, chest = equalizer_ofdm(rx_iq_data, FLAGS, ofdmobj)
@@ -330,10 +314,10 @@ def main(argv):
     with tf.compat.v1.variable_scope('dummy') as scope:
         iq_rx_eq = out_eq + 0
     trainable_vars = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.TRAINABLE_VARIABLES, scope='Equalizer')
-    sgv_rx_dummy = gde.sgv_scope('dummy', graph=graph2)
+    sgv_rx_dummy = tf.contrib.graph_editor.sgv_scope('dummy', graph=graph)
     # tf.contrib.graph_editor.reroute_outputs(sgv_ch_awgn, sgv_eq)
     sgv_rx_new = sgv_rx.remap_inputs([0])
-    gde.reroute_inputs(sgv_rx_dummy, sgv_rx_new)
+    tf.contrib.graph_editor.reroute_inputs(sgv_rx_dummy, sgv_rx_new)
     # sgv_rx_demod1 = sgv_rx_demod.remap_inputs([0])
     # tf.contrib.graph_editor.reroute_inputs(sgv_rx_dummy, sgv_rx_demod1)
 
@@ -420,7 +404,6 @@ def main(argv):
         train_ys = bit_source(nbits, frame_size, frame_cnt)
         train_snr = np.random.choice(aa_milne_arr, [frame_cnt, 1], p=[0.01, 0.01, 0.02, 0.02, 0.02, 0.02, 0.1, 0.5, 0.2, 0.1])
         iq_tx_cmpx, train_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(train_ys)
-        #iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
         # train_xs, chan_xs = fading.run(iq_tx_cmpx)
         if phase2 and FLAGS.mobile:
             train_xs, chan_xs = fading1.run(iq_tx_cmpx)
@@ -449,7 +432,6 @@ def main(argv):
         test_ys = bit_source(nbits, frame_size, 1024)
         # iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_np(test_ys)
         iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(test_ys)
-        #iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
         # test_xs, chan_xs = fading.run(iq_tx_cmpx)
         if phase2 and FLAGS.mobile:
             test_xs, chan_xs = fading1.run(iq_tx_cmpx)

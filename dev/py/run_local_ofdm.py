@@ -22,7 +22,7 @@ import time
 import subprocess
 from locals import *
 
-flags = tf.app.flags
+flags = tf.compat.v1.app.flags
 flags.DEFINE_boolean('awgn',True,'set False to skip awgn model training')
 FLAGS = flags.FLAGS
 
@@ -119,5 +119,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    tf.app.run()
+    tf.compat.v1.app.run()
 

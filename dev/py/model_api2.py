@@ -17,7 +17,6 @@
 
 import tensorflow as tf
 import numpy as np
-import tensorflow_addons as tfa
 from radio import *
 tf.compat.v1.disable_eager_execution()
 
@@ -120,6 +119,10 @@ def dense_block_tx(inputs, FLAGS):
 
 
 def conv_block_tx(inputs, FLAGS):
+    if tf.__version__ == '1.4.0':
+        activation_fn = tf.nn.relu
+    else:
+        activation_fn = tf.nn.leaky_relu
     m_iq = 2
     _, n_sym, n_sc, nbits = inputs.shape
     n_sym, n_sc, nbits = int(n_sym), int(n_sc), int(nbits)
@@ -960,9 +963,9 @@ def equalizer_dnnE(inputs, FLAGS, ofdmobj):
 
     pilotCarriers = ofdmobj.pilotCarriers.astype(np.int32)
 
-    _, n_sym, n_sc, m_iq = inputs.shape
+    _, n_sym, n_sc, m_iq = inputs.get_shape()
     #chest = tf.contrib.layers.layer_norm(inputs, center=False, scale=False, begin_norm_axis=1)
-    layer_norma = tf.keras.layers.LayerNormalization(center=False, scale=False, axis=1)
+    layer_norma = tf.keras.layers.LayerNormalization(axis=-1)
     chest = layer_norma(inputs)
     # chest = inputs
     if not FLAGS.cp:

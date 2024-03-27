@@ -20,6 +20,17 @@ import numpy as np
 import pandas as pd
 import os
 import time
+import wandb
+import scipy.io as sio
+
+import tensorflow.keras as tf_keras
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Dense, Dropout, Flatten, Activation, Conv2D, MaxPooling2D, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, History
+from tensorflow.keras.optimizers import Adam, SGD
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras import activations
+
 # from sklearn.preprocessing import OneHotEncoder
 from model import *
 from ofdm import *
@@ -27,12 +38,12 @@ from radio import *
 from util import *
 # these ones let us draw images in our notebook
 
-flags = tf.app.flags
+flags =tf.compat.v1.app.flags
 flags.DEFINE_string('save_dir', './output/', 'directory where model graph and weights are saved')
-flags.DEFINE_integer('nbits', 1, 'bits per symbol')
+flags.DEFINE_integer('nbits', 3, 'bits per symbol')
 flags.DEFINE_integer('msg_length', 100800, 'Message Length of Dataset')
 flags.DEFINE_integer('batch_size', 512, '')
-flags.DEFINE_integer('max_epoch_num', 1000, '')
+flags.DEFINE_integer('max_epoch_num', 5000, '')
 flags.DEFINE_integer('seed', 1, 'random seed')
 flags.DEFINE_integer('nfft', 64, 'Dropout rate TX conv block')
 flags.DEFINE_integer('nsymbol', 7, 'Dropout rate TX conv block')
@@ -40,21 +51,34 @@ flags.DEFINE_integer('npilot', 8, 'Dropout rate TX dense block')
 flags.DEFINE_integer('nguard', 8, 'Dropout rate RX conv block')
 flags.DEFINE_integer('nfilter', 80, 'Dropout rate RX conv block')
 flags.DEFINE_float('SNR', 3.0, '')
-flags.DEFINE_integer('early_stop',100,'number of epoches for early stop')
+flags.DEFINE_integer('early_stop',200,'number of epoches for early stop')
 flags.DEFINE_boolean('ofdm',True,'If add OFDM layer')
 flags.DEFINE_string('pilot', 'lte', 'Pilot type: lte(default), block, comb, scattered')
-flags.DEFINE_string('channel', 'EPA', 'AWGN or Rayleigh Channel: Flat, EPA, EVA, ETU')
+flags.DEFINE_string('channel', 'AWGN', 'AWGN or Rayleigh Channel: Flat, EPA, EVA, ETU')
 flags.DEFINE_boolean('cp',True,'If include cyclic prefix')
 flags.DEFINE_boolean('longcp',True,'Length of cyclic prefix: true 25%, false 7%')
 flags.DEFINE_boolean('load_model',False,'Set True if run a test')
 flags.DEFINE_float('split',1.0,'split factor for validation set, no split by default')
-flags.DEFINE_string('token', 'OFDM','Name of model to be saved')
+flags.DEFINE_string('token', 'OFDM_AWGN_PA_QAM8','Name of model to be saved')
 flags.DEFINE_boolean('test',False,'Test trained model')
 FLAGS = flags.FLAGS
 
 
 
+# 1. Start a W&B run
+wandb.init(project='DCNN-endtoend', entity='mhni',config = FLAGS)
 
+PA_Model_Select = 'PA_Model_100MHz_APA'
+PA_Model_File = '/media/workstation/241FB9B9A0036526/AI/dl_ofdm-master/dev/py/PA_models/' + PA_Model_Select + '.mat'
+PA_Model_Data = sio.loadmat(PA_Model_File)
+
+MP_Weights = PA_Model_Data['PA_Model'].squeeze()
+Memory_Deep, Order = np.shape(MP_Weights)
+MP_Weights_Reshape = MP_Weights.T.reshape(-1)
+Model_Input_Power_Max = PA_Model_Data['Model_Input_Power_Max'].squeeze().tolist()
+
+PA_Model_Data = {'MP_Weights': MP_Weights_Reshape, 'Memory_Deep': Memory_Deep, 'Order': Order, 'Model_Input_Power_Max': Model_Input_Power_Max}
+# Model training here
 
 def test_model(FLAGS, path_prefix_min, ofdmobj, session):
     y, x, iq_receiver, outputs, total_loss, ber, berlin, conf_matrix, power_tx, noise_pwr, iq_rx, iq_tx, ce_mean, SNR = load_model_np(path_prefix_min,session)
@@ -74,6 +98,7 @@ def test_model(FLAGS, path_prefix_min, ofdmobj, session):
         test_ys = bit_source(nbits, frame_size, frame_cnt)
         # iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_np(test_ys)
         iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(test_ys)
+        iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
         test_xs,_ = fading.run(iq_tx_cmpx)
         snr_test = snr_t * np.ones((frame_cnt, 1))
         test_xs, pwr_noise_avg = AWGN_channel_np(test_xs, snr_test)
@@ -83,6 +108,10 @@ def test_model(FLAGS, path_prefix_min, ofdmobj, session):
         print("Test Confusion Matrix: ")
         print(str(confmax))
         df = df.append({'SNR': snr_t, 'BER': berl, 'Loss': test_loss}, ignore_index=True)
+        wandb.log({'SNR_test': snr_t, 'BER_test': berl, 'Loss_test': test_loss})
+        #wandb.log({"SNR_test": snr_t})
+        #wandb.log({"BER_test" : berl})
+        #wandb.log({"Test Loss" : test_loss})
 
     df = df.set_index('SNR')
     csvfile = 'Test_DCCN_%s.csv'%(FLAGS.token + '_' + FLAGS.channel)
@@ -107,21 +136,21 @@ def main(argv):
     np.random.seed(FLAGS.seed)
 
 
-    config = tf.ConfigProto()
+    config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
 
     if FLAGS.test:
-        session = tf.Session(config=config)
-        session.run(tf.global_variables_initializer())
+        session = tf.compat.v1.Session(config=config)
+        session.run(tf.compat.v1.global_variables_initializer())
         path_prefix_min = os.path.join(FLAGS.save_dir, FLAGS.token)
         test_model(FLAGS, path_prefix_min, ofdmobj, session)
         session.close()
         return
 
-    tf.reset_default_graph()
+    tf.compat.v1.reset_default_graph()
     # Input x symbol stream
-    y = tf.placeholder(tf.int32, shape=[None, frame_size, nbits], name='bits_in')
-    x = tf.placeholder(tf.float32, shape=[None, ofdm_pf, tx_frame_size, 2], name='tx_ofdm')
+    y = tf.compat.v1.placeholder(tf.int32, shape=[None, frame_size, nbits], name='bits_in')
+    x = tf.compat.v1.placeholder(tf.float32, shape=[None, ofdm_pf, tx_frame_size, 2], name='tx_ofdm')
     with tf.name_scope('transmitter') as scope:
         # Transmitter
         # iq_tx_re = tf.contrib.layers.layer_norm(x, center=False, scale=False, begin_norm_axis=2)/np.sqrt(2)
@@ -131,7 +160,7 @@ def main(argv):
         iq_layer, power_tx = complex_clip(iq_tx_re, peak=8.0) # Clip by norm PAPR 8:1
 
     # AWGN Channel
-    SNR = tf.placeholder(tf.float32, shape=[None, 1], name='SNR')  #
+    SNR = tf.compat.v1.placeholder(tf.float32, shape=[None, 1], name='SNR')  #
     with tf.name_scope('channel') as scope:
         iq_receiver, noise_pwr = AWGN_channel(iq_layer, SNR)
         # rx_iq_data = iq_receiver
@@ -156,16 +185,16 @@ def main(argv):
     if tf.__version__ == '1.4.0':
         crossentroy = tf.nn.softmax_cross_entropy_with_logits(labels=y_onehot, logits=out_softmax)
     else:
-        crossentroy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y_onehot, logits=out_softmax)
+        crossentroy = tf.compat.v1.nn.softmax_cross_entropy_with_logits_v2(labels=y_onehot, logits=out_softmax)
 
-    regularization_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    regularization_losses = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.REGULARIZATION_LOSSES)
     REG_COEFF = 0.0001
     BER_COEFF = 1.0
     ce_mean = tf.reduce_mean(crossentroy, name='ce_mean')
     y_index = tf.reshape(y, [-1])
     out_index = tf.cast(tf.argmax(out_softmax, axis=1), tf.int32)
     #BER = tf.reduce_mean(tf.abs(out_index - x_index)) # MSE
-    conf_matrix = tf.confusion_matrix(y_index, out_index)
+    conf_matrix = tf.compat.v1.confusion_matrix(y_index, out_index)
     ber, berlin = ber_tensor(conf_matrix)
     # snr_ce = tf.losses.mean_squared_error(SNR, snr_est)
     total_loss = ce_mean + berlin * REG_COEFF * sum(regularization_losses) + BER_COEFF * tf.cast(ber, tf.float32)
@@ -182,14 +211,14 @@ def main(argv):
     tf.identity(iq_rx, 'iq_rx')
     tf.identity(iq_tx, 'iq_tx')
 
-    global_step_tensor = tf.get_variable('global_step', trainable=False, shape=[], initializer=tf.zeros_initializer)
-    learning_rate = tf.train.exponential_decay(0.001, global_step_tensor,
+    global_step_tensor = tf.compat.v1.get_variable('global_step', trainable=False, shape=[], initializer=tf.zeros_initializer)
+    learning_rate = tf.compat.v1.train.exponential_decay(0.001, global_step_tensor,
                                                500, 0.98, staircase=True)
-    optimizer = tf.train.AdamOptimizer(learning_rate)
+    optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate)
     train_op = optimizer.minimize(total_loss, global_step=global_step_tensor)
     #tf.identity(train_op,'train_op')
 
-    saver = tf.train.Saver()
+    saver = tf.compat.v1.train.Saver()
 
     # train for an epoch and visualize
     berl = 0.5
@@ -198,8 +227,8 @@ def main(argv):
     epoch_min_loss = 0
     path_prefix_min = ''
     max_epoch_num = FLAGS.max_epoch_num
-    session = tf.Session(config=config)
-    session.run(tf.global_variables_initializer())
+    session = tf.compat.v1.Session(config=config)
+    session.run(tf.compat.v1.global_variables_initializer())
 
     print("Start Training")
     # snr_seq = np.array([-3.0, 0.0, 0, 0, 0, 3, 5, 5], dtype=np.float32)
@@ -225,6 +254,7 @@ def main(argv):
         train_snr = FLAGS.SNR + np.repeat(snr_seq, frame_cnt//8, axis=0)
         # iq_tx_cmpx, train_xs, iq_pilot_tx = ofdmobj.ofdm_tx_np(train_ys)
         iq_tx_cmpx, train_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(train_ys)
+        iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
         train_xs, chan_xs = fading.run(iq_tx_cmpx)
         train_xs, pwr_noise_avg = AWGN_channel_np(train_xs, train_snr)
         for i in range(frame_cnt // batch_size):
@@ -241,14 +271,19 @@ def main(argv):
         train_loss_epoch = np.mean(train_loss_avg)
         idealbatchsize = (int(min(200.0/max(berl_mean,1.e-6), 900000.)/(55*nbits))//8)
         batch_size = max(batch_size, idealbatchsize)
+        wandb.log({"Batch size" : batch_size})
         print("Training Results")
         print("Tx Power: %f, Noise Power: %f" % (np.mean(pwr_tx_avg), np.mean(pwr_noise_avg)))
         # print("Tx Power: %f, Noise Power: %f, SNR MSE: %f" % (np.mean(pwr_tx_avg), np.mean(pwr_noise_avg), np.mean(snr_mses)))
         print("Train Loss: %f"%(train_loss_epoch))
+        wandb.log({"Tx Power ": (np.mean(pwr_tx_avg))})
+        wandb.log({"Noise Power": (np.mean(pwr_noise_avg))})
+        wandb.log({"Train Loss epoch": (train_loss_epoch)})
 
         test_ys = bit_source(nbits, frame_size, 1024)
         # iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_np(test_ys)
         iq_tx_cmpx, test_xs, iq_pilot_tx = ofdmobj.ofdm_tx_frame_np(test_ys)
+        iq_tx_cmpx = PA_Model(PA_In=iq_tx_cmpx, PA_Model_Data=PA_Model_Data)
         test_xs, _ = fading.run(iq_tx_cmpx)
         snr_test = FLAGS.SNR * np.ones((1024, 1))
         test_xs, pwr_noise_avg = AWGN_channel_np(test_xs, snr_test)
@@ -263,6 +298,10 @@ def main(argv):
 
         np.savetxt("%s_txiq.csv"%(FLAGS.token), tx_sample[0:2048], delimiter=",")
         np.savetxt("%s_rxiq.csv"%(FLAGS.token), rx_sample[0:2048], delimiter=",")
+        wandb.log({"Tx Power": pwr_tx})
+        wandb.log({" Noise Power": (np.mean(pwr_noise_avg))})
+        wandb.log({"Val Loss":(test_loss)})
+        wandb.log({"Val BER": (berl)})
 
         #if (epoch%100)==0:
         if train_loss_epoch < test_loss_min:
@@ -273,17 +312,19 @@ def main(argv):
         if epoch - FLAGS.early_stop > epoch_min_loss:
             break
 
-    # path_prefix = saver.save(session, os.path.join(FLAGS.save_dir, FLAGS.token))
+    #path_prefix = saver.save(session, os.path.join(FLAGS.save_dir, FLAGS.token))
     print("Training Done!, Best model saved to")
     print(path_prefix_min)
 
     #sess = tf.Session()
-
+    #session.close()
+    tf.compat.v1.reset_default_graph()
     test_model(FLAGS, path_prefix_min, ofdmobj, session)
+
     session.close()
 
 
 
 if __name__ == "__main__":
-    tf.app.run()
-
+    tf.compat.v1.app.run()
+    wandb.tensorflow.log(tf.summary.merge_all())

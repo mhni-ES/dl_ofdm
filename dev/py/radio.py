@@ -74,8 +74,8 @@ def AWGN_channel(inputs, SNR):
                                          variance_epsilon=1e-8) / np.sqrt(2.0)
     # power_tx = tf.reduce_mean(tf.square(tf.norm(inputs, axis=-1)))
     level = np.sqrt(.5)*tf.pow(10.0, tf.negative(SNR)/20.0) # Re and Im Max Value of power 1 signal is sqrt(1/2)
-    noise_phase = tf.random_uniform(tf.shape(input_real), maxval=2*np.pi, dtype=tf.float32)
-    noise_amp = tf.multiply(tf.reshape(level,[-1,1,1,1]), tf.random_normal(tf.shape(input_real), stddev=1.0, dtype=tf.float32))
+    noise_phase = tf.compat.v1.random_uniform(tf.shape(input_real), maxval=2*np.pi, dtype=tf.float32)
+    noise_amp = tf.multiply(tf.reshape(level,[-1,1,1,1]), tf.compat.v1.random_normal(tf.shape(input_real), stddev=1.0, dtype=tf.float32))
     noise_real = tf.multiply(tf.abs(noise_amp), tf.math.sin(noise_phase))
     noise_imag = tf.multiply(tf.abs(noise_amp), tf.math.cos(noise_phase))
     # print(noise_level)
@@ -526,3 +526,42 @@ def AWGN_channel_np(inputs, SNR):
     return outputs, noise_power
 
 
+######################## PA Model ########################
+def PA_Model(PA_In, PA_Model_Data):
+# Function for nonlinear transform of data.
+    n_frame, frame_size, nbits = PA_In.shape
+    PA_In = PA_In / np.max(np.abs(PA_In)) * PA_Model_Data['Model_Input_Power_Max']
+    PA_In = PA_In.reshape([-1,nbits])
+
+    PA_Out0 = (PA_Model_Data['MP_Weights'][0] * PA_In + PA_Model_Data['MP_Weights'][1] * (PA_In * PA_In)
+              + PA_Model_Data['MP_Weights'][2] * (PA_In * PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][3] * (PA_In * PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][4] * (PA_In * PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][5] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][6] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In*PA_In))
+    PA_Out1 = (PA_Model_Data['MP_Weights'][7] * PA_In + PA_Model_Data['MP_Weights'][8] * (PA_In * PA_In)
+              + PA_Model_Data['MP_Weights'][9] * (PA_In * PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][10] * (PA_In * PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][11] * (PA_In * PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][12] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][13] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In*PA_In))
+    PA_Out2 = (PA_Model_Data['MP_Weights'][14] * PA_In + PA_Model_Data['MP_Weights'][15] * (PA_In * PA_In)
+              + PA_Model_Data['MP_Weights'][16] * (PA_In * PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][17] * (PA_In * PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][18] * (PA_In * PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][19] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][20] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In*PA_In))
+    PA_Out3 = (PA_Model_Data['MP_Weights'][21] * PA_In + PA_Model_Data['MP_Weights'][22] * (PA_In * PA_In)
+              + PA_Model_Data['MP_Weights'][23] * (PA_In * PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][24] * (PA_In * PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][25] * (PA_In * PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][26] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][27] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In*PA_In))
+    PA_Out4 = (PA_Model_Data['MP_Weights'][28] * PA_In + PA_Model_Data['MP_Weights'][29] * (PA_In * PA_In)
+              + PA_Model_Data['MP_Weights'][30] * (PA_In * PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][31] * (PA_In * PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][32] * (PA_In * PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][33] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In)
+              + PA_Model_Data['MP_Weights'][34] * (PA_In * PA_In*PA_In*PA_In*PA_In*PA_In*PA_In))
+    PA_Out = PA_Out0 + PA_Out1 + PA_Out2 + PA_Out3 + PA_Out4
+    return PA_Out.reshape(n_frame,frame_size,nbits)

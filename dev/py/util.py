@@ -45,5 +45,5 @@ def ber_tensor(conf_matrix):
     totalbits = tf.reduce_sum(conf_matrix)
     errorbits = conf_matrix[0, 1]+conf_matrix[1, 0]
     berlinear = tf.divide(errorbits, totalbits, name="BER")
-    return tf.log(berlinear), tf.cast(berlinear, tf.float32)
+    return tf.compat.v1.log(berlinear), tf.cast(berlinear, tf.float32)
 

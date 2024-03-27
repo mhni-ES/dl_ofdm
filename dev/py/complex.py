@@ -180,7 +180,7 @@ def layers_conv2d_complex(inputs, filters, kernal, strides=1, padding='valid'):
     else:
         raise NameError('Unacceptable Kernal Size')
 
-    conv = tf.layers.conv3d(conv, filters * 2, kernal_size, strides=strides, padding=padding)
+    conv = tf.compat.v1.layers.conv3d(conv, filters * 2, kernal_size, strides=strides, padding=padding)
     shapes_conv = conv.get_shape().as_list()
     conv = tf.reshape(conv, [-1, shapes_conv[1], shapes_conv[2], shapes_conv[3] * 2, filters])
     assert (shapes[4] == 2)
